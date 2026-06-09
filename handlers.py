@@ -1,13 +1,15 @@
+import asyncio
 from os import getenv
 from pathlib import Path
 from typing import Any
 
 from aiogram import F, Router
+from aiogram.enums import ChatAction
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, FSInputFile, Message
+from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto, Message
 
 import keyboards
 import texts
@@ -54,20 +56,62 @@ async def delete_message_safely(message: Message | None) -> None:
         pass
 
 
-async def delete_stored_screen(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    message_id = data.get(LAST_SCREEN_MESSAGE_ID)
-    if not isinstance(message_id, int):
-        return
-
+async def delete_message_by_id_safely(message: Message, message_id: int) -> None:
     try:
         await message.bot.delete_message(chat_id=message.chat.id, message_id=message_id)
     except TelegramBadRequest:
         pass
 
 
+async def disable_markup_safely(message: Message | None) -> None:
+    if not message:
+        return
+
+    try:
+        await message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+
+
+async def get_stored_screen_id(state: FSMContext) -> int | None:
+    data = await state.get_data()
+    message_id = data.get(LAST_SCREEN_MESSAGE_ID)
+    if not isinstance(message_id, int):
+        return None
+
+    return message_id
+
+
 async def remember_screen(state: FSMContext, message: Message) -> None:
     await state.update_data({LAST_SCREEN_MESSAGE_ID: message.message_id})
+
+
+async def edit_screen_if_possible(
+    target: Message,
+    state: FSMContext,
+    text: str,
+    reply_markup: Any,
+    image_path: Path | None,
+) -> bool:
+    try:
+        has_image = image_path is not None and image_path.exists() and image_path.is_file()
+
+        if has_image and target.photo:
+            await target.edit_media(
+                media=InputMediaPhoto(media=FSInputFile(image_path), caption=text),
+                reply_markup=reply_markup,
+            )
+            await remember_screen(state, target)
+            return True
+
+        if not has_image and not target.photo:
+            await target.edit_text(text, reply_markup=reply_markup)
+            await remember_screen(state, target)
+            return True
+    except TelegramBadRequest:
+        return False
+
+    return False
 
 
 async def send_screen(
@@ -78,16 +122,30 @@ async def send_screen(
     image_filename: str | None = None,
     delete_current: bool = False,
 ) -> None:
-    if not delete_current:
-        await delete_stored_screen(target, state)
+    old_message_id = target.message_id if delete_current else await get_stored_screen_id(state)
+    image_path = get_media_path(target, image_filename) if image_filename else None
 
-    image_path = get_media_path(target, image_filename) if image_filename else Path()
-    sent = await send_text_with_optional_image(target, text, image_path, reply_markup)
+    if delete_current and await edit_screen_if_possible(
+        target,
+        state,
+        text,
+        reply_markup,
+        image_path,
+    ):
+        return
 
-    if delete_current and target.message_id != sent.message_id:
-        await delete_message_safely(target)
+    if delete_current:
+        await disable_markup_safely(target)
+
+    await target.bot.send_chat_action(chat_id=target.chat.id, action=ChatAction.TYPING)
+
+    sent = await send_text_with_optional_image(target, text, image_path or Path(), reply_markup)
 
     await remember_screen(state, sent)
+
+    if old_message_id and old_message_id != sent.message_id:
+        await asyncio.sleep(0.15)
+        await delete_message_by_id_safely(target, old_message_id)
 
 
 def get_media_path(message: Message, filename: str) -> Path:
@@ -98,7 +156,11 @@ def get_media_path(message: Message, filename: str) -> Path:
     return media_dir / filename
 
 
-async def show_main_menu(message: Message, state: FSMContext | None = None) -> None:
+async def show_main_menu(
+    message: Message,
+    state: FSMContext | None = None,
+    delete_current: bool = False,
+) -> None:
     if state:
         await state.set_state(None)
 
@@ -108,6 +170,7 @@ async def show_main_menu(message: Message, state: FSMContext | None = None) -> N
             texts.START,
             keyboards.main_menu(),
             "start.jpg",
+            delete_current=delete_current,
         )
         return
 
@@ -119,7 +182,7 @@ async def show_main_menu(message: Message, state: FSMContext | None = None) -> N
     )
 
 
-async def show_shops(message: Message, state: FSMContext) -> None:
+async def show_shops(message: Message, state: FSMContext, delete_current: bool = False) -> None:
     data = await state.get_data()
     brand = data.get("brand")
     model = data.get("model")
@@ -130,33 +193,58 @@ async def show_shops(message: Message, state: FSMContext) -> None:
         texts.SHOPS + texts.selected_device_text(brand, model),
         keyboards.shops_menu(brand, model),
         "shops.jpg",
+        delete_current=delete_current,
     )
 
 
-async def show_brand_selection(message: Message, state: FSMContext) -> None:
+async def show_brand_selection(
+    message: Message,
+    state: FSMContext,
+    delete_current: bool = False,
+) -> None:
     await state.set_state(DeviceSelection.choosing_brand)
-    sent = await message.answer(texts.CHOOSE_BRAND, reply_markup=keyboards.brand_menu())
-    await remember_screen(state, sent)
+    await send_screen(
+        message,
+        state,
+        texts.CHOOSE_BRAND,
+        keyboards.brand_menu(),
+        delete_current=delete_current,
+    )
 
 
-async def show_model_selection(message: Message, state: FSMContext, brand: str) -> None:
+async def show_model_selection(
+    message: Message,
+    state: FSMContext,
+    brand: str,
+    delete_current: bool = False,
+) -> None:
     await state.update_data(brand=brand)
     await state.set_state(DeviceSelection.choosing_model)
-    sent = await message.answer(
+    await send_screen(
+        message,
+        state,
         texts.CHOOSE_MODEL.format(brand=brand),
-        reply_markup=keyboards.model_menu(brand),
+        keyboards.model_menu(brand),
+        delete_current=delete_current,
     )
-    await remember_screen(state, sent)
 
 
-async def show_device_result(message: Message, state: FSMContext, brand: str, model: str) -> None:
+async def show_device_result(
+    message: Message,
+    state: FSMContext,
+    brand: str,
+    model: str,
+    delete_current: bool = False,
+) -> None:
     await state.update_data(brand=brand, model=model)
     await state.set_state(DeviceSelection.device_selected)
-    sent = await message.answer(
+    await send_screen(
+        message,
+        state,
         texts.DEVICE_RESULT.format(brand=brand, model=model),
-        reply_markup=keyboards.device_result_menu(brand, model),
+        keyboards.device_result_menu(brand, model),
+        delete_current=delete_current,
     )
-    await remember_screen(state, sent)
 
 
 @router.message(CommandStart())
@@ -168,16 +256,14 @@ async def start(message: Message, state: FSMContext) -> None:
 async def main_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     if callback.message:
-        await show_main_menu(callback.message, state)
-        await delete_message_safely(callback.message)
+        await show_main_menu(callback.message, state, delete_current=True)
 
 
 @router.callback_query(F.data == keyboards.CB_SHOPS)
 async def shops(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     if callback.message:
-        await show_shops(callback.message, state)
-        await delete_message_safely(callback.message)
+        await show_shops(callback.message, state, delete_current=True)
 
 
 @router.callback_query(F.data == keyboards.CB_PROMO)
@@ -212,8 +298,7 @@ async def socials(callback: CallbackQuery, state: FSMContext) -> None:
 async def choose_brand(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     if callback.message:
-        await show_brand_selection(callback.message, state)
-        await delete_message_safely(callback.message)
+        await show_brand_selection(callback.message, state, delete_current=True)
 
 
 @router.callback_query(F.data.startswith(keyboards.BRAND_PREFIX))
@@ -224,12 +309,10 @@ async def brand_selected(callback: CallbackQuery, state: FSMContext) -> None:
 
     brand = callback.data.removeprefix(keyboards.BRAND_PREFIX)
     if not is_supported_brand(brand):
-        await show_brand_selection(callback.message, state)
-        await delete_message_safely(callback.message)
+        await show_brand_selection(callback.message, state, delete_current=True)
         return
 
-    await show_model_selection(callback.message, state, brand)
-    await delete_message_safely(callback.message)
+    await show_model_selection(callback.message, state, brand, delete_current=True)
 
 
 @router.callback_query(F.data == keyboards.CB_CHANGE_MODEL)
@@ -241,12 +324,10 @@ async def change_model(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     brand = data.get("brand")
     if not brand or not is_supported_brand(brand):
-        await show_brand_selection(callback.message, state)
-        await delete_message_safely(callback.message)
+        await show_brand_selection(callback.message, state, delete_current=True)
         return
 
-    await show_model_selection(callback.message, state, brand)
-    await delete_message_safely(callback.message)
+    await show_model_selection(callback.message, state, brand, delete_current=True)
 
 
 @router.callback_query(F.data.startswith(keyboards.MODEL_PREFIX))
@@ -260,12 +341,10 @@ async def model_selected(callback: CallbackQuery, state: FSMContext) -> None:
     model = callback.data.removeprefix(keyboards.MODEL_PREFIX)
 
     if not brand or not is_supported_model(brand, model):
-        await show_brand_selection(callback.message, state)
-        await delete_message_safely(callback.message)
+        await show_brand_selection(callback.message, state, delete_current=True)
         return
 
-    await show_device_result(callback.message, state, brand, model)
-    await delete_message_safely(callback.message)
+    await show_device_result(callback.message, state, brand, model, delete_current=True)
 
 
 @router.callback_query(F.data == keyboards.CB_RESET_DEVICE)
@@ -273,14 +352,21 @@ async def reset_device(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await state.clear()
     if callback.message:
-        sent = await callback.message.answer(texts.DEVICE_RESET, reply_markup=keyboards.main_menu())
-        await delete_message_safely(callback.message)
-        await remember_screen(state, sent)
+        await send_screen(
+            callback.message,
+            state,
+            texts.DEVICE_RESET,
+            keyboards.main_menu(),
+            delete_current=True,
+        )
 
 
 @router.message()
 async def unsupported_text(message: Message, state: FSMContext) -> None:
     await state.set_state(None)
-    await delete_stored_screen(message, state)
+    old_message_id = await get_stored_screen_id(state)
     sent = await message.answer(texts.UNSUPPORTED_TEXT, reply_markup=keyboards.main_menu())
     await remember_screen(state, sent)
+
+    if old_message_id and old_message_id != sent.message_id:
+        await delete_message_by_id_safely(message, old_message_id)
