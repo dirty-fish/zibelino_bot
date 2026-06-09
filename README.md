@@ -1,6 +1,6 @@
 # ZIBELINO Telegram Bot
 
-Production-ready Telegram bot for the ZIBELINO accessories brand. The bot introduces the brand, shows marketplace links, promotions, social media links, and helps users select a device to generate personalized marketplace search links.
+Commercial Telegram bot for the ZIBELINO accessories brand. The bot introduces the brand through short visual cards, sends marketplace links, shows current promotions, links to social media, and helps users select a device to generate personalized marketplace search links.
 
 ## Technology Stack
 
@@ -35,12 +35,12 @@ BOT_TOKEN=1234567890:replace_with_your_telegram_bot_token
 MEDIA_DIR=media
 ```
 
-Place brand images into `media/`:
+Place brand card images into `media/`:
 
-- `media/start.jpg`
-- `media/shops.jpg`
-- `media/promo.jpg`
-- `media/socials.jpg`
+- `media/start.jpg` — brand welcome card
+- `media/shops.jpg` — catalog and marketplace card
+- `media/promo.jpg` — promotion card
+- `media/socials.jpg` — social media card
 
 If an image is missing, the bot sends the text and buttons without crashing.
 
@@ -88,3 +88,4 @@ project/
 - Current device data is kept in FSM memory as `{"brand": "...", "model": "..."}`.
 - Marketplace links are generated locally with `urllib.parse.quote_plus`.
 - Unsupported user text returns the user to the main menu.
+- Menu navigation keeps the chat clean: the previous bot screen is deleted after a new screen is sent.

@@ -20,25 +20,22 @@ MODEL_PREFIX = "model:"
 
 def main_menu() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="🛍 Где купить", callback_data=CB_SHOPS)
-    builder.button(text="🔥 Акции", callback_data=CB_PROMO)
+    builder.button(text="📱 Подобрать под устройство", callback_data=CB_CHOOSE_BRAND)
+    builder.button(text="🛍 Каталог бренда", callback_data=CB_SHOPS)
+    builder.button(text="🔥 Акция", callback_data=CB_PROMO)
     builder.button(text="📲 Соцсети", callback_data=CB_SOCIALS)
     builder.adjust(1)
     return builder.as_markup()
 
 
 def shops_menu(brand: str | None = None, model: str | None = None) -> InlineKeyboardMarkup:
-    links = build_marketplace_links()
+    links = build_marketplace_links(brand, model) if brand and model else build_marketplace_links()
     builder = InlineKeyboardBuilder()
-    builder.button(text="📱 Подобрать устройство", callback_data=CB_CHOOSE_BRAND)
-    builder.button(text="🛒 Все товары бренда", url=links["Wildberries"])
-
-    if brand and model:
-        builder.button(text="🟣 Wildberries", url=build_marketplace_links(brand, model)["Wildberries"])
-        builder.button(text="🔵 Ozon", url=build_marketplace_links(brand, model)["Ozon"])
-        builder.button(text="🟡 Яндекс Маркет", url=build_marketplace_links(brand, model)["Yandex Market"])
-
-    builder.button(text="🏠 Главное меню", callback_data=CB_MAIN)
+    builder.button(text="🟣 Wildberries", url=links["Wildberries"])
+    builder.button(text="🔵 Ozon", url=links["Ozon"])
+    builder.button(text="🟡 Яндекс Маркет", url=links["Yandex Market"])
+    builder.button(text="📱 Изменить устройство", callback_data=CB_CHOOSE_BRAND)
+    builder.button(text="🏠 Меню", callback_data=CB_MAIN)
     builder.adjust(1)
     return builder.as_markup()
 
@@ -48,7 +45,7 @@ def brand_menu() -> InlineKeyboardMarkup:
     for brand in MANUFACTURERS:
         builder.button(text=brand, callback_data=f"{BRAND_PREFIX}{brand}")
     builder.button(text="↩️ Назад", callback_data=CB_SHOPS)
-    builder.button(text="🏠 Главное меню", callback_data=CB_MAIN)
+    builder.button(text="🏠 Меню", callback_data=CB_MAIN)
     builder.adjust(1)
     return builder.as_markup()
 
@@ -59,7 +56,7 @@ def model_menu(brand: str) -> InlineKeyboardMarkup:
         builder.button(text=model, callback_data=f"{MODEL_PREFIX}{model}")
     builder.button(text="📱 Изменить производителя", callback_data=CB_CHANGE_BRAND)
     builder.button(text="↩️ Назад", callback_data=CB_CHANGE_BRAND)
-    builder.button(text="🏠 Главное меню", callback_data=CB_MAIN)
+    builder.button(text="🏠 Меню", callback_data=CB_MAIN)
     builder.adjust(1)
     return builder.as_markup()
 
@@ -73,7 +70,7 @@ def device_result_menu(brand: str, model: str) -> InlineKeyboardMarkup:
     builder.button(text="✏️ Изменить модель", callback_data=CB_CHANGE_MODEL)
     builder.button(text="📱 Изменить производителя", callback_data=CB_CHANGE_BRAND)
     builder.button(text="🔄 Сбросить устройство", callback_data=CB_RESET_DEVICE)
-    builder.button(text="🏠 Главное меню", callback_data=CB_MAIN)
+    builder.button(text="🏠 Меню", callback_data=CB_MAIN)
     builder.adjust(1)
     return builder.as_markup()
 
@@ -81,9 +78,9 @@ def device_result_menu(brand: str, model: str) -> InlineKeyboardMarkup:
 def promo_menu() -> InlineKeyboardMarkup:
     links = build_marketplace_links()
     builder = InlineKeyboardBuilder()
-    builder.button(text="🛍 Перейти к товарам", url=links["Wildberries"])
+    builder.button(text="🛍 Смотреть товары", url=links["Wildberries"])
     builder.button(text="📱 Подобрать устройство", callback_data=CB_CHOOSE_BRAND)
-    builder.button(text="🏠 Главное меню", callback_data=CB_MAIN)
+    builder.button(text="🏠 Меню", callback_data=CB_MAIN)
     builder.adjust(1)
     return builder.as_markup()
 
@@ -95,6 +92,13 @@ def socials_menu() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="MAX", url="https://max.ru/id5024119950_biz"),
         InlineKeyboardButton(text="Дзен", url="https://dzen.ru/zibelino"),
         InlineKeyboardButton(text="TikTok", url="https://www.tiktok.com/@zibelino_"),
-        InlineKeyboardButton(text="🏠 Главное меню", callback_data=CB_MAIN),
+        InlineKeyboardButton(text="🏠 Меню", callback_data=CB_MAIN),
     ]
-    return InlineKeyboardMarkup(inline_keyboard=[[button] for button in buttons])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            buttons[0:2],
+            buttons[2:4],
+            [buttons[4]],
+            [buttons[5]],
+        ],
+    )
